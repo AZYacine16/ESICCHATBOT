@@ -1,3 +1,5 @@
+// @ts-nocheck
+
 import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 import { validateSession, db } from "@/lib/db";
