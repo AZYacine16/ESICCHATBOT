@@ -137,20 +137,40 @@ export function appendLog({
   ip,
 }: {
   chatId: string;
-  userId: number;
-  role: "user" | "assistant";
+  userId: number | string; // ✅ accepte aussi string
+  role: "user" | "assistant" | "security";
   text: string;
   matched?: boolean;
   timestamp?: string;
   ip?: string;
 }) {
   try {
-    const ts = timestamp || new Date().toISOString(); // ✅ ISO 8601 UTC
+    const ts = timestamp || new Date().toISOString();
+
+    // 🧠 Conversion sécurisée du userId (test-user → 0)
+    const safeUserId =
+      typeof userId === "number"
+        ? userId
+        : /^[0-9]+$/.test(userId as string)
+        ? Number(userId)
+        : 0;
+
+    console.log("[DEBUG appendLog]", { chatId, userId, role, text, ip });
+
     const stmt = db.prepare(`
       INSERT INTO logs (chat_id, user_id, role, text, matched, timestamp, ip)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
-    stmt.run(chatId, userId, role, text, matched ? 1 : 0, ts, ip || "unknown");
+
+    stmt.run(
+      chatId,
+      safeUserId,
+      role,
+      text,
+      matched ? 1 : 0,
+      ts,
+      ip || "unknown"
+    );
   } catch (err) {
     console.error("❌ Erreur appendLog :", err);
   }
