@@ -33,21 +33,34 @@ export async function POST(req: Request) {
 
     // 🧩 Réponses directes
     const directAnswers: Record<string, string> = {
+      // 📚 Bibliothèque
       "horaires bibliotheque":
         "📚 La bibliothèque est ouverte du lundi au vendredi de 8h à 18h.",
 
+      // 🍽️ Restaurant universitaire
       "horaires resto u":
         "🍽️ Le restaurant universitaire est ouvert de 11h30 à 14h et de 18h30 à 20h.",
 
+      // 👩‍💼 Contact scolarité
       "contact scolarite": "CONTACT_SCOLARITE",
 
-      "reglement campus":
-        "📘 Le règlement intérieur est disponible sur l'intranet du campus (rubrique Vie étudiante).",
+      // ✅ US-008 : Règles de vie du campus
+      "regles de vie": `
+📘 Voici les principales <b>règles de vie du campus</b> :<br/><br/>
+✅ Respecter les horaires et les salles attribuées.<br/>
+🚭 Interdiction de fumer dans les bâtiments.<br/>
+🤝 Respect mutuel entre étudiants et enseignants.<br/>
+💻 Utilisation responsable des ressources numériques.<br/><br/>
+👉 Le <b>règlement intérieur complet</b> est disponible en PDF sur <b>Teams</b>, dans la classe :<br/>
+<em>ESIS-2_CPDIA-2_2025-2026</em>.`,
 
-      reglement:
-        "📘 Le règlement intérieur est disponible sur l'intranet du campus (rubrique Vie étudiante).",
+      "reglement campus": "regles de vie",
+      reglement: "regles de vie",
+      "règles de vie": "regles de vie",
+      "charte de bonne conduite": "regles de vie",
+      "consignes de sécurité": "regles de vie",
 
-      // ✅ US-009 : Dates importantes du calendrier académique
+      // ✅ US-009 : Dates importantes
       "dates importantes": `
 🗓️ Voici les prochaines <b>dates importantes</b> du calendrier académique :<br/><br/>
 📅 <b>Rentrée universitaire :</b> 22 septembre 2025<br/>
@@ -55,31 +68,34 @@ export async function POST(req: Request) {
 📅 <b>Journée Portes Ouvertes :</b> 15 mars 2025<br/>
 🌸 <b>Vacances de printemps :</b> 20 avril → 04 mai 2025<br/>
 🎓 <b>Fin des cours du semestre 2 :</b> 30 juin 2025<br/>
-☀️ <b>Vacances d’été :</b> à partir du 1er juillet 2025
-`,
+☀️ <b>Vacances d’été :</b> à partir du 1er juillet 2025`,
 
-      examens: `
-📝 Les examens du semestre 1 débutent le **19 janvier 2025**.
-`,
+      examens:
+        "📝 Les examens du semestre 1 débutent le <b>19 janvier 2025</b>.",
+      vacances: "☀️ Les vacances d'été commencent le <b>1er juillet 2025</b>.",
 
-      vacances: `
-☀️ Les vacances d'été commencent le **1er juillet 2025**.
-`,
-
-      "formations proposees": `
-🎓 Formations proposées : Informatique, Gestion, Droit et Design.
-`,
-
-      formations: `
-🎓 Formations proposées : Informatique, Gestion, Droit et Design.
-`,
+      // 🎓 Formations proposées
+      "formations proposees":
+        "🎓 Formations proposées : Informatique, Gestion, Droit et Design.",
+      formations:
+        "🎓 Formations proposées : Informatique, Gestion, Droit et Design.",
     };
 
-    // 🔍 Recherche de réponse
-    let found = directAnswers[q] || findBestAnswer(q);
+    // 🔍 Recherche de réponse + gestion des redirections internes
+    let found = directAnswers[q];
+
+    // Si la valeur d'une clé redirige vers une autre (ex: "reglement campus" → "regles de vie")
+    if (found && directAnswers[found]) {
+      found = directAnswers[found];
+    }
+
+    if (!found) {
+      found = findBestAnswer(q);
+    }
+
     const response = found || "Je n'ai pas encore la réponse à cette question.";
 
-    // 🧾 Sauvegarde question (utilisateur)
+    // 🧾 Sauvegarde (question)
     appendLog({
       chatId,
       userId: session.user_id,
@@ -93,7 +109,7 @@ export async function POST(req: Request) {
         "unknown",
     });
 
-    // 🧾 Sauvegarde réponse (assistant)
+    // 🧾 Sauvegarde (réponse)
     appendLog({
       chatId,
       userId: session.user_id,
