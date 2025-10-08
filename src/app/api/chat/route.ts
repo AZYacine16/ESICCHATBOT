@@ -9,12 +9,13 @@ import {
 } from "@/lib/db";
 
 /**
- * SCRUM-17 + US-013:
- * - detectInjection(input): basic regex-based detector (XSS / SQLi / JS)
- * - securityAttempts: in-memory counter per key (IP or user) to detect repeated attempts (SCRUM-17)
- * - rateLimiter: per-user timestamps + ban map for US-013
+ * SCRUM-17 + SCRUM-18 + SCRUM-19:
+ * - detectInjection(input) : basic regex detector (XSS / SQLi / JS)
+ * - securityAttempts: in-memory counter per key (IP or user) for SCRUM-17
+ * - rate limiting: per-user timestamps + ban map for SCRUM-18
+ * - classifyQuestion: rule-based classifier for categories (SCRUM-19)
  *
- * NOTE: en production, remplacez les Maps en mémoire par Redis.
+ * NOTE: pour la production, remplacez Maps par Redis pour persistance & scale.
  */
 
 // ---------------------- Injection detection (SCRUM-17) ----------------------
@@ -62,13 +63,13 @@ const securityAttempts = new Map<
 const ATTEMPT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 const ATTEMPT_THRESHOLD = 5;
 
-// ---------------------- Rate limiting (US-013) ----------------------
+// ---------------------- Rate limiting (SCRUM-18) ----------------------
 const RATE_LIMIT_WINDOW_MS = process.env.RATE_LIMIT_WINDOW_MS
   ? Number(process.env.RATE_LIMIT_WINDOW_MS)
   : 60 * 60 * 1000; // 1h
 const RATE_LIMIT_MAX = process.env.RATE_LIMIT_MAX
   ? Number(process.env.RATE_LIMIT_MAX)
-  : 10; // 10 req / window
+  : 10; // default 10
 const RATE_LIMIT_BAN_MS = process.env.RATE_LIMIT_BAN_MS
   ? Number(process.env.RATE_LIMIT_BAN_MS)
   : 30 * 60 * 1000; // 30min
@@ -76,21 +77,12 @@ const rateMap = new Map<string, number[]>(); // user:<id> => timestamps
 const banMap = new Map<string, number>(); // user:<id> => banExpiryEpochMs
 
 // ---------------------- Direct answers (canonical + aliases) ----------------------
-// Raw definitions (keys can be canonical or aliases pointing to other keys)
-// Keep here les réponses que tu m'as fournies, j'ai repris exactement les entrées principales.
 const rawDirect: Record<string, string> = {
-  // 📚 Bibliothèque
   "horaires bibliotheque":
     "📚 La bibliothèque est ouverte du lundi au vendredi de 8h à 18h.",
-
-  // 🍽️ Restaurant universitaire
   "horaires resto u":
     "🍽️ Le restaurant universitaire est ouvert de 11h30 à 14h et de 18h30 à 20h.",
-
-  // 👩‍💼 Contact scolarité
   "contact scolarite": "CONTACT_SCOLARITE",
-
-  // ✅ US-008 : Règles de vie du campus
   "regles de vie": `
 📘 Voici les principales <b>règles de vie du campus</b> :<br/><br/>
 ✅ Respecter les horaires et les salles attribuées.<br/>
@@ -99,14 +91,11 @@ const rawDirect: Record<string, string> = {
 💻 Utilisation responsable des ressources numériques.<br/><br/>
 👉 Le <b>règlement intérieur complet</b> est disponible sur <b>Teams</b>, dans la classe :<br/>
 <em>ESIS-2_CPDIA-2_2025-2026</em>.`,
-
   "reglement campus": "regles de vie",
   reglement: "regles de vie",
   "règles de vie": "regles de vie",
   "charte de bonne conduite": "regles de vie",
   "consignes de sécurité": "regles de vie",
-
-  // ✅ US-009 : Dates importantes
   "dates importantes": `
 🗓️ Voici les prochaines <b>dates importantes</b> du calendrier académique :<br/><br/>
 📅 <b>Rentrée universitaire :</b> 22 septembre 2025<br/>
@@ -115,11 +104,8 @@ const rawDirect: Record<string, string> = {
 🌸 <b>Vacances de printemps :</b> 20 avril → 04 mai 2025<br/>
 🎓 <b>Fin des cours du semestre 2 :</b> 30 juin 2025<br/>
 ☀️ <b>Vacances d’été :</b> à partir du 1er juillet 2025`,
-
   examens: "📝 Les examens du semestre 1 débutent le <b>19 janvier 2025</b>.",
   vacances: "☀️ Les vacances d'été commencent le <b>1er juillet 2025</b>.",
-
-  // ✅ US-010 : Formations proposées
   "formations proposees": `
 🎓 L’ESIC propose plusieurs formations en <b>informatique</b> et en <b>commerce</b> :<br/><br/>
 
@@ -163,16 +149,12 @@ const rawDirect: Record<string, string> = {
   programmes: "formations proposees",
 };
 
-// Build normalized map for quick lookup
-// Build normalized map for quick lookup (resolve 1-level aliases so "reglement campus" -> final text)
 const normalizedMap = new Map<string, string>();
 for (const [k, v] of Object.entries(rawDirect)) {
-  // if v is itself a key in rawDirect, use that target (flatten one alias level)
   const finalVal = rawDirect[String(v)] ? rawDirect[String(v)] : v;
   normalizedMap.set(normalize(k), finalVal);
 }
 
-// Resolve alias chain: follow until we reach a value that is not itself a key
 function resolveAliasByKey(key: string, maxDepth = 8): string | undefined {
   if (!key) return undefined;
   let k = normalize(key);
@@ -181,18 +163,164 @@ function resolveAliasByKey(key: string, maxDepth = 8): string | undefined {
     const val = normalizedMap.get(k);
     if (val === undefined) return undefined;
     const valNorm = normalize(String(val));
-    // if the value maps to another key, follow it
     if (normalizedMap.has(valNorm)) {
-      if (valNorm === k) return val; // self-loop protection
+      if (valNorm === k) return val;
       k = valNorm;
       depth++;
       continue;
     }
-    // final textual response
     return val;
   }
-  // fallback
   return normalizedMap.get(k);
+}
+
+// ---------------------- SCRUM-19: simple rule-based classifier ----------------------
+function classifyQuestion(raw: string): string {
+  if (!raw || typeof raw !== "string") return "unknown";
+  const text = normalize(raw);
+  // règle prioritaire : si la phrase mentionne horaires + bibliothèque,
+  // on considère que c'est lié à l'emploi_du_temps (comportement "5/6")
+  if (
+    (text.includes("horaire") || text.includes("horaires")) &&
+    text.includes("bibliotheque")
+  ) {
+    return "emploi_du_temps";
+  }
+
+  const categories: Record<string, string[]> = {
+    emploi_du_temps: [
+      "emploi",
+      "emploi du temps",
+      "planning",
+      "horaire",
+      "horaires",
+      "examen",
+      "examens",
+      "calendrier",
+      "date",
+      "dates",
+    ],
+    procedure_admin: [
+      "certificat",
+      "inscription",
+      "stage",
+      "alternance",
+      "diplome",
+      "attestation",
+      "convention",
+      "certificat de scolarite",
+      "certificat de scolarité",
+    ],
+    service_campus: [
+      "bibliotheque",
+      "bibliothèque",
+      "resto",
+      "resto u",
+      "restaurant",
+      "sport",
+      "sante",
+      "santé",
+      "infirmerie",
+    ],
+    reglement: [
+      "règle",
+      "regle",
+      "règlement",
+      "reglement",
+      "sanction",
+      "absence",
+      "absences",
+      "conduite",
+      "charte",
+      "règles de vie",
+      "regles de vie",
+    ],
+    formation: [
+      "formation",
+      "formations",
+      "programme",
+      "module",
+      "debouch",
+      "débouché",
+      "bts",
+      "master",
+    ],
+    contact: [
+      "email",
+      "contact",
+      "bureau",
+      "responsable",
+      "téléphone",
+      "telephone",
+      "poste",
+      "adresse",
+    ],
+    reclamation: [
+      "probleme",
+      "problème",
+      "aide",
+      "réclamation",
+      "reclamation",
+      "support",
+      "bug",
+      "pb",
+    ],
+  };
+
+  const scores: Record<string, number> = {};
+  const matchedKeywords: Record<string, string[]> = {};
+
+  for (const [cat, kws] of Object.entries(categories)) {
+    let s = 0;
+    matchedKeywords[cat] = [];
+    for (const kw of kws) {
+      const nkw = normalize(kw);
+      if (!nkw) continue;
+      if (text.includes(nkw)) {
+        // small weight by kw length to prefer longer matches
+        const weight = Math.min(5, Math.max(1, Math.floor(nkw.length / 4)));
+        s += weight;
+        matchedKeywords[cat].push(kw);
+      }
+    }
+    scores[cat] = s;
+  }
+
+  const entries = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) return "unknown";
+  const bestScore = entries[0][1];
+  if (bestScore <= 0) return "unknown";
+
+  const tied = entries.filter(([, sc]) => sc === bestScore).map(([k]) => k);
+  if (tied.length === 1) return tied[0];
+
+  // tie-breaker by longest matching keyword
+  let bestCatByKw: string | null = null;
+  let bestKwLen = 0;
+  for (const cat of tied) {
+    for (const kw of matchedKeywords[cat] || []) {
+      const l = normalize(kw).length;
+      if (l > bestKwLen) {
+        bestKwLen = l;
+        bestCatByKw = cat;
+      }
+    }
+  }
+  if (bestCatByKw) return bestCatByKw;
+
+  // priority fallback
+  const priority = [
+    "service_campus",
+    "contact",
+    "procedure_admin",
+    "reglement",
+    "formation",
+    "reclamation",
+    "emploi_du_temps",
+  ];
+  for (const p of priority) if (tied.includes(p)) return p;
+
+  return tied[0];
 }
 
 // ---------------------- POST handler ----------------------
@@ -233,6 +361,11 @@ export async function POST(req: Request) {
     const userAgent = req.headers.get("user-agent") || "unknown";
     const userKey = `user:${session.user_id}`;
 
+    // normalize + chat id + category (computed once)
+    const q = normalize(question);
+    const chatId = incomingChatId || uuidv4();
+    const category = classifyQuestion(question);
+
     // ---------- SCRUM-17: injection detection ----------
     const detection = detectInjection(question);
     if (detection.detected) {
@@ -251,6 +384,7 @@ export async function POST(req: Request) {
           matched: false,
           timestamp: new Date().toISOString(),
           ip,
+          category,
         });
       } catch (err) {
         console.error("[SEC-DETECT] appendLog error:", err);
@@ -277,6 +411,7 @@ export async function POST(req: Request) {
               matched: false,
               timestamp: new Date().toISOString(),
               ip,
+              category,
             });
           } catch (err) {
             console.error("[SEC-DETECT] appendLog threshold error:", err);
@@ -308,11 +443,11 @@ export async function POST(req: Request) {
           matched: false,
           timestamp: new Date().toISOString(),
           ip,
+          category,
         });
       } catch (err) {
         console.error("[RATE] appendLog blocked attempt error:", err);
       }
-
       return NextResponse.json({ error: message }, { status: 429 });
     }
 
@@ -338,28 +473,20 @@ export async function POST(req: Request) {
           matched: false,
           timestamp: new Date().toISOString(),
           ip,
+          category,
         });
       } catch (err) {
         console.error("[RATE] appendLog exceed error:", err);
       }
-
       return NextResponse.json({ error: humanMsg }, { status: 429 });
     }
 
-    // ---------- Normal processing: resolve direct answers or fuzzy search ----------
-    const q = normalize(question);
-    const chatId = incomingChatId || uuidv4();
-
-    // Try direct resolution (with alias following)
+    // ---------- Normal processing ----------
     let found = resolveAliasByKey(q);
-
-    // fallback to fuzzy DB search
-    if (!found) {
-      found = findBestAnswer(q);
-    }
+    if (!found) found = findBestAnswer(q);
     const response = found || "Je n'ai pas encore la réponse à cette question.";
 
-    // Save logs: user question
+    // Save logs: user question (include category)
     try {
       appendLog({
         chatId,
@@ -369,12 +496,13 @@ export async function POST(req: Request) {
         matched: Boolean(found),
         timestamp: new Date().toISOString(),
         ip,
+        category,
       });
     } catch (err) {
       console.error("appendLog(user) failed:", err);
     }
 
-    // Save logs: assistant response
+    // Save assistant log (include category)
     try {
       appendLog({
         chatId,
@@ -384,12 +512,13 @@ export async function POST(req: Request) {
         matched: Boolean(found),
         timestamp: new Date().toISOString(),
         ip: "server",
+        category,
       });
     } catch (err) {
       console.error("appendLog(assistant) failed:", err);
     }
 
-    return NextResponse.json({ answer: response, chatId });
+    return NextResponse.json({ answer: response, chatId, category });
   } catch (e) {
     console.error("Erreur chat:", e);
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });

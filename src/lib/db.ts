@@ -286,7 +286,8 @@ export function ensureSchema() {
       text TEXT NOT NULL,
       matched INTEGER DEFAULT 0,
       timestamp TEXT NOT NULL,
-      ip TEXT DEFAULT 'unknown'
+      ip TEXT DEFAULT 'unknown',
+      category TEXT DEFAULT 'unknown'
     );
 
     CREATE TABLE IF NOT EXISTS users (
@@ -318,6 +319,11 @@ export function ensureSchema() {
     const hasIp = cols.some((c) => c.name === "ip");
     if (!hasIp) {
       db.exec("ALTER TABLE logs ADD COLUMN ip TEXT DEFAULT 'unknown'");
+    }
+    // <-- Ajoute ce bloc pour category :
+    const hasCategory = cols.some((c) => c.name === "category");
+    if (!hasCategory) {
+      db.exec("ALTER TABLE logs ADD COLUMN category TEXT DEFAULT 'unknown'");
     }
   } catch (err) {
     console.error("⚠️ Erreur ensureSchema migration :", err);
@@ -431,6 +437,51 @@ export function findBestAnswer(normalizedQuestion: string) {
   return best.score >= 0.28 ? best.value : null;
 }
 
+// export function appendLog({
+//   chatId,
+//   userId,
+//   role,
+//   text,
+//   matched,
+//   timestamp,
+//   ip,
+// }: {
+//   chatId: string;
+//   userId: number | string;
+//   role: "user" | "assistant" | "security";
+//   text: string;
+//   matched?: boolean;
+//   timestamp?: string;
+//   ip?: string;
+// }) {
+//   try {
+//     const ts = timestamp || new Date().toISOString();
+
+//     const safeUserId =
+//       typeof userId === "number"
+//         ? userId
+//         : /^[0-9]+$/.test(userId as string)
+//         ? Number(userId)
+//         : 0;
+
+//     const stmt = db.prepare(`
+//       INSERT INTO logs (chat_id, user_id, role, text, matched, timestamp, ip)
+//       VALUES (?, ?, ?, ?, ?, ?, ?)
+//     `);
+
+//     stmt.run(
+//       chatId,
+//       safeUserId,
+//       role,
+//       text,
+//       matched ? 1 : 0,
+//       ts,
+//       ip || "unknown"
+//     );
+//   } catch (err) {
+//     console.error("❌ Erreur appendLog :", err);
+//   }
+// }
 export function appendLog({
   chatId,
   userId,
@@ -439,6 +490,7 @@ export function appendLog({
   matched,
   timestamp,
   ip,
+  category,
 }: {
   chatId: string;
   userId: number | string;
@@ -447,6 +499,7 @@ export function appendLog({
   matched?: boolean;
   timestamp?: string;
   ip?: string;
+  category?: string; // <-- nouveau champ optionnel
 }) {
   try {
     const ts = timestamp || new Date().toISOString();
@@ -458,20 +511,60 @@ export function appendLog({
         ? Number(userId)
         : 0;
 
-    const stmt = db.prepare(`
-      INSERT INTO logs (chat_id, user_id, role, text, matched, timestamp, ip)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
+    // Première tentative : INSERT avec category (si la colonne existe)
+    try {
+      const stmtWithCategory = db.prepare(`
+        INSERT INTO logs (chat_id, user_id, role, text, matched, timestamp, ip, category)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
 
-    stmt.run(
-      chatId,
-      safeUserId,
-      role,
-      text,
-      matched ? 1 : 0,
-      ts,
-      ip || "unknown"
-    );
+      stmtWithCategory.run(
+        chatId,
+        safeUserId,
+        role,
+        text,
+        matched ? 1 : 0,
+        ts,
+        ip || "unknown",
+        category || "unknown"
+      );
+
+      return;
+    } catch (err: any) {
+      // Si la DB n'a pas la colonne category, on retombe sur l'INSERT sans category.
+      const msg = String(err?.message || "");
+      if (
+        /no such column: category/i.test(msg) ||
+        /has no column named category/i.test(msg) ||
+        /SQLITE_ERROR/i.test(err?.code || "")
+      ) {
+        // fallback below
+      } else {
+        // erreur autre -> log et rethrow si nécessaire
+        console.error("❌ Erreur appendLog (attempt with category) :", err);
+        return;
+      }
+    }
+
+    // Fallback : ancienne table sans 'category' (compatibilité)
+    try {
+      const stmt = db.prepare(`
+        INSERT INTO logs (chat_id, user_id, role, text, matched, timestamp, ip)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      stmt.run(
+        chatId,
+        safeUserId,
+        role,
+        text,
+        matched ? 1 : 0,
+        ts,
+        ip || "unknown"
+      );
+    } catch (err) {
+      console.error("❌ Erreur appendLog (fallback):", err);
+    }
   } catch (err) {
     console.error("❌ Erreur appendLog :", err);
   }
