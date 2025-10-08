@@ -3,7 +3,6 @@ import fs from "fs";
 import path from "path";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
-import os from "os";
 
 // Ensure a stable absolute path for dev server
 const projectRoot = process.cwd();
@@ -25,14 +24,16 @@ export function ensureSchema() {
       key TEXT UNIQUE NOT NULL,
       value TEXT NOT NULL
     );
+
     CREATE TABLE IF NOT EXISTS logs (
-     id INTEGER PRIMARY KEY AUTOINCREMENT,
-     chat_id TEXT NOT NULL,
-     user_id TEXT NOT NULL,
-     role TEXT NOT NULL,          -- "user" ou "assistant"
-     text TEXT NOT NULL,
-     matched INTEGER DEFAULT 0,
-     timestamp TEXT NOT NULL
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL,          -- "user" ou "assistant"
+      text TEXT NOT NULL,
+      matched INTEGER DEFAULT 0,
+      timestamp TEXT NOT NULL,
+      ip TEXT DEFAULT 'unknown'    -- ✅ Ajout du champ IP
     );
 
     CREATE TABLE IF NOT EXISTS users (
@@ -41,6 +42,7 @@ export function ensureSchema() {
       password_hash TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
       user_id INTEGER NOT NULL,
@@ -49,16 +51,25 @@ export function ensureSchema() {
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
   `);
-  // Lightweight migrations for existing installations
+
+  // ✅ Migrations légères pour anciens schémas
   try {
     const cols = db.prepare("PRAGMA table_info('logs')").all() as Array<{
       name: string;
     }>;
+
     const hasUserId = cols.some((c) => c.name === "user_id");
     if (!hasUserId) {
       db.exec("ALTER TABLE logs ADD COLUMN user_id INTEGER");
     }
-  } catch {}
+
+    const hasIp = cols.some((c) => c.name === "ip");
+    if (!hasIp) {
+      db.exec("ALTER TABLE logs ADD COLUMN ip TEXT DEFAULT 'unknown'");
+    }
+  } catch (err) {
+    console.error("⚠️ Erreur ensureSchema migration :", err);
+  }
 }
 
 export function upsertAnswer(key: string, value: string) {
@@ -74,12 +85,10 @@ export function getAllAnswers() {
 }
 
 export function findBestAnswer(normalizedQuestion: string) {
-  // Safety: ensure seeds are present (idempotent)
   try {
     seedAnswers();
   } catch {}
   let rows = getAllAnswers();
-  // Fallback to JSON seed if table empty for any reason
   if (!rows || rows.length === 0) {
     try {
       const jsonPath = path.join(dbDir, "answers.json");
@@ -91,7 +100,8 @@ export function findBestAnswer(normalizedQuestion: string) {
       }
     } catch {}
   }
-  // 1) Exact/substring match
+
+  // 1️⃣ Exact match
   for (const row of rows) {
     const k = normalize(row.key);
     if (
@@ -101,7 +111,8 @@ export function findBestAnswer(normalizedQuestion: string) {
       return row.value;
     }
   }
-  // 2) Fuzzy word-overlap (Jaccard) fallback
+
+  // 2️⃣ Fuzzy match (Jaccard)
   const qTokens = new Set(normalizedQuestion.split(" ").filter(Boolean));
   let best = { score: 0, value: null as string | null };
   for (const row of rows) {
@@ -129,15 +140,20 @@ export function appendLog({
   userId: number;
   role: "user" | "assistant";
   text: string;
-  matched: boolean;
-  timestamp: string;
+  matched?: boolean;
+  timestamp?: string;
   ip?: string;
 }) {
-  const stmt = db.prepare(
-    `INSERT INTO logs (chat_id, user_id, role, text, matched, timestamp) 
-     VALUES (?, ?, ?, ?, ?, ?)`
-  );
-  stmt.run(chatId, userId, role, text, matched ? 1 : 0, timestamp);
+  try {
+    const ts = timestamp || new Date().toISOString(); // ✅ ISO 8601 UTC
+    const stmt = db.prepare(`
+      INSERT INTO logs (chat_id, user_id, role, text, matched, timestamp, ip)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(chatId, userId, role, text, matched ? 1 : 0, ts, ip || "unknown");
+  } catch (err) {
+    console.error("❌ Erreur appendLog :", err);
+  }
 }
 
 export function normalize(text: string) {
@@ -190,13 +206,13 @@ export function ensureDefaultUser() {
       db.prepare(
         "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)"
       ).run("akram", hash, new Date().toISOString());
-      console.log("Seeded default user: akram / akram123");
+      console.log("✅ Seeded default user: akram / akram123");
     } else {
       db.prepare("UPDATE users SET password_hash=? WHERE id=?").run(
         hash,
         existing.id
       );
-      console.log("Updated default user password: akram / akram123");
+      console.log("🔑 Updated default user password: akram / akram123");
     }
   } catch {}
 }
@@ -207,7 +223,6 @@ ensureDefaultUser();
 
 function seedAnswers() {
   const seedAnswers: Record<string, string> = {
-    // Q/R de base
     "horaires bibliotheque":
       "La bibliothèque est ouverte du lundi au vendredi de 8h à 18h.",
     "horaires resto u":
@@ -220,33 +235,6 @@ function seedAnswers() {
       "Les examens débutent le 15 juin. Les inscriptions ferment le 30 septembre.",
     formations:
       "Nous proposons des formations en Informatique, Gestion, Droit et Design.",
-
-    // Variantes et synonymes pour une meilleure couverture
-    "horaires campus":
-      "Le campus est accessible de 7h30 à 21h du lundi au vendredi.",
-    "horaires scolarite":
-      "Le service scolarité est ouvert de 9h à 12h30 et de 13h30 à 17h.",
-    "contact bibliotheque": "Bibliothèque: bibliotheque@campus.fr, poste 204.",
-    "wifi campus":
-      "Réseau Wi‑Fi: CAMPUS-WIFI. Authentifiez-vous avec vos identifiants étudiants.",
-    "carte etudiante":
-      "La carte étudiante est délivrée par la scolarité. En cas de perte, déclaration à l'accueil puis réédition (10€).",
-    parking:
-      "Le parking étudiants se situe au sous-sol B. Accès avec la carte étudiante de 7h à 21h.",
-    "resto u tarifs":
-      "Tarif étudiant menu Resto U: 3,30€ (ticket RU ou paiement sans contact).",
-    bourses:
-      "Les bourses Crous se demandent sur messervices.etudiant.gouv.fr pendant la campagne DSE.",
-    stages:
-      "Le service carrières accompagne vos stages: careers@campus.fr. Convention obligatoire avant le début.",
-    absences:
-      "Toute absence doit être justifiée sous 48h sur l'ENT rubrique 'Absences'.",
-    rattrapage:
-      "Les rattrapages ont lieu en juillet. L'inscription se fait sur l'ENT deux semaines avant.",
-    vacances:
-      "Calendrier académique: vacances d'hiver semaine 8, printemps semaine 15.",
-    inscriptions:
-      "Réinscriptions ouvertes du 1er juin au 31 juillet via l'ENT, onglet Scolarité.",
   };
   Object.entries(seedAnswers).forEach(([key, value]) =>
     upsertAnswer(key, value)
