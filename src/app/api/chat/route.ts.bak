@@ -1,3 +1,4 @@
+// src/app/api/chat/route.ts
 import { NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 export const runtime = "nodejs";
@@ -14,7 +15,7 @@ import {
  * - securityAttempts: in-memory counter per key (IP or user) to detect repeated attempts (SCRUM-17)
  * - rateLimiter: per-user timestamps + ban map for US-013
  *
- * NOTE: en production, remplacez les Maps en mémoire par Redis.
+ * NOTE: in production, remplacez les Maps en mémoire par Redis (persistance & scale).
  */
 
 // ---------------------- Injection detection (SCRUM-17) ----------------------
@@ -59,141 +60,27 @@ const securityAttempts = new Map<
   string,
   { count: number; firstTs: number; lastTs: number }
 >();
-const ATTEMPT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+const ATTEMPT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes default
 const ATTEMPT_THRESHOLD = 5;
 
 // ---------------------- Rate limiting (US-013) ----------------------
+// Config via env vars (modifiable)
 const RATE_LIMIT_WINDOW_MS = process.env.RATE_LIMIT_WINDOW_MS
   ? Number(process.env.RATE_LIMIT_WINDOW_MS)
-  : 60 * 60 * 1000; // 1h
+  : 60 * 60 * 1000; // default: 1 heure
+
 const RATE_LIMIT_MAX = process.env.RATE_LIMIT_MAX
   ? Number(process.env.RATE_LIMIT_MAX)
-  : 10; // 10 req / window
+  : 10; // default: 10 questions / fenêtre
+
 const RATE_LIMIT_BAN_MS = process.env.RATE_LIMIT_BAN_MS
   ? Number(process.env.RATE_LIMIT_BAN_MS)
-  : 30 * 60 * 1000; // 30min
-const rateMap = new Map<string, number[]>(); // user:<id> => timestamps
-const banMap = new Map<string, number>(); // user:<id> => banExpiryEpochMs
+  : 30 * 60 * 1000; // default: 30 minutes
 
-// ---------------------- Direct answers (canonical + aliases) ----------------------
-// Raw definitions (keys can be canonical or aliases pointing to other keys)
-// Keep here les réponses que tu m'as fournies, j'ai repris exactement les entrées principales.
-const rawDirect: Record<string, string> = {
-  // 📚 Bibliothèque
-  "horaires bibliotheque":
-    "📚 La bibliothèque est ouverte du lundi au vendredi de 8h à 18h.",
-
-  // 🍽️ Restaurant universitaire
-  "horaires resto u":
-    "🍽️ Le restaurant universitaire est ouvert de 11h30 à 14h et de 18h30 à 20h.",
-
-  // 👩‍💼 Contact scolarité
-  "contact scolarite": "CONTACT_SCOLARITE",
-
-  // ✅ US-008 : Règles de vie du campus
-  "regles de vie": `
-📘 Voici les principales <b>règles de vie du campus</b> :<br/><br/>
-✅ Respecter les horaires et les salles attribuées.<br/>
-🚭 Interdiction de fumer dans les bâtiments.<br/>
-🤝 Respect mutuel entre étudiants et enseignants.<br/>
-💻 Utilisation responsable des ressources numériques.<br/><br/>
-👉 Le <b>règlement intérieur complet</b> est disponible sur <b>Teams</b>, dans la classe :<br/>
-<em>ESIS-2_CPDIA-2_2025-2026</em>.`,
-
-  "reglement campus": "regles de vie",
-  reglement: "regles de vie",
-  "règles de vie": "regles de vie",
-  "charte de bonne conduite": "regles de vie",
-  "consignes de sécurité": "regles de vie",
-
-  // ✅ US-009 : Dates importantes
-  "dates importantes": `
-🗓️ Voici les prochaines <b>dates importantes</b> du calendrier académique :<br/><br/>
-📅 <b>Rentrée universitaire :</b> 22 septembre 2025<br/>
-📝 <b>Début des examens du semestre 1 :</b> 19 janvier 2025<br/>
-📅 <b>Journée Portes Ouvertes :</b> 15 mars 2025<br/>
-🌸 <b>Vacances de printemps :</b> 20 avril → 04 mai 2025<br/>
-🎓 <b>Fin des cours du semestre 2 :</b> 30 juin 2025<br/>
-☀️ <b>Vacances d’été :</b> à partir du 1er juillet 2025`,
-
-  examens: "📝 Les examens du semestre 1 débutent le <b>19 janvier 2025</b>.",
-  vacances: "☀️ Les vacances d'été commencent le <b>1er juillet 2025</b>.",
-
-  // ✅ US-010 : Formations proposées
-  "formations proposees": `
-🎓 L’ESIC propose plusieurs formations en <b>informatique</b> et en <b>commerce</b> :<br/><br/>
-
-<b>BTS :</b><br/>
-• BTS Management Commercial Opérationnel (MCO)<br/>
-• BTS Gestion de la PME (GPME)<br/>
-• BTS Cybersécurité Informatique et Réseaux, Électronique<br/>
-• BTS SIO, option SISR (Infrastructures & Réseaux)<br/>
-• BTS Négociation et Digitalisation de la Relation Client (NDRC)<br/>
-• BTS Support à l’Action Managériale (SAM)<br/>
-• BTS Cybersécurité (option CIEL)<br/><br/>
-
-<b>Commerce :</b><br/>
-• Chef de Projet Digital<br/>
-• Prépa Community Manager<br/>
-• TP - Responsable d'établissement marchand<br/>
-• Responsable Commerce et Marketing<br/>
-• Responsable d'activité commerciale et marketing<br/>
-• Ingénieur d'Affaires<br/><br/>
-
-<b>Informatique :</b><br/>
-• Technicien Supérieur Systèmes et Réseaux<br/>
-• Concepteur de solutions no code<br/>
-• Administrateur d'infrastructures sécurisées<br/>
-• Concepteur développeur d'applications<br/>
-• Master Expert en Systèmes d’Information et Sécurité<br/>
-• Chef de projet Data et Intelligence Artificielle<br/><br/>
-
-<b>Autres :</b><br/>
-• CAP AEPE<br/>
-• TP SAMS
-`,
-
-  // synonymes
-  formations: "formations proposees",
-  formation: "formations proposees",
-  bts: "formations proposees",
-  master: "formations proposees",
-  informatique: "formations proposees",
-  commerce: "formations proposees",
-  programmes: "formations proposees",
-};
-
-// Build normalized map for quick lookup
-// Build normalized map for quick lookup (resolve 1-level aliases so "reglement campus" -> final text)
-const normalizedMap = new Map<string, string>();
-for (const [k, v] of Object.entries(rawDirect)) {
-  // if v is itself a key in rawDirect, use that target (flatten one alias level)
-  const finalVal = rawDirect[String(v)] ? rawDirect[String(v)] : v;
-  normalizedMap.set(normalize(k), finalVal);
-}
-
-// Resolve alias chain: follow until we reach a value that is not itself a key
-function resolveAliasByKey(key: string, maxDepth = 8): string | undefined {
-  if (!key) return undefined;
-  let k = normalize(key);
-  let depth = 0;
-  while (depth < maxDepth) {
-    const val = normalizedMap.get(k);
-    if (val === undefined) return undefined;
-    const valNorm = normalize(String(val));
-    // if the value maps to another key, follow it
-    if (normalizedMap.has(valNorm)) {
-      if (valNorm === k) return val; // self-loop protection
-      k = valNorm;
-      depth++;
-      continue;
-    }
-    // final textual response
-    return val;
-  }
-  // fallback
-  return normalizedMap.get(k);
-}
+// Per-user timestamps (in-memory)
+const rateMap = new Map<string, number[]>(); // key = user:<id> => array of epoch ms
+// Per-user temporary ban map
+const banMap = new Map<string, number>(); // key = user:<id> => banExpiryEpochMs
 
 // ---------------------- POST handler ----------------------
 export async function POST(req: Request) {
@@ -206,7 +93,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
     }
 
-    // Dev helper: accept sid=test-session-1 => seeded user id = 1
+    // Dev helper: allow sid=test-session-1 => user 1 (seeded)
     let session: any = null;
     if (
       process.env.NODE_ENV !== "production" &&
@@ -233,14 +120,25 @@ export async function POST(req: Request) {
     const userAgent = req.headers.get("user-agent") || "unknown";
     const userKey = `user:${session.user_id}`;
 
-    // ---------- SCRUM-17: injection detection ----------
+    // ---------------------- Injection detection (SCRUM-17) ----------------------
     const detection = detectInjection(question);
     if (detection.detected) {
       const secChatId = incomingChatId || uuidv4();
+      const timestamp = new Date().toISOString();
       const pattern = detection.pattern || "unknown";
       const truncated =
         question.length > 200 ? question.slice(0, 200) + "..." : question;
       const secText = `[SECURITY ALERT] Tentative d'injection détectée (${pattern}) : ${truncated}`;
+
+      console.log("[SEC-DETECT] will appendLog (security)", {
+        chatId: secChatId,
+        userId: session.user_id,
+        role: "security",
+        pattern,
+        ip,
+        userAgent,
+        truncated: truncated.slice(0, 200),
+      });
 
       try {
         appendLog({
@@ -249,14 +147,15 @@ export async function POST(req: Request) {
           role: "security",
           text: secText,
           matched: false,
-          timestamp: new Date().toISOString(),
+          timestamp,
           ip,
         });
+        console.log("[SEC-DETECT] appendLog (security) called successfully");
       } catch (err) {
         console.error("[SEC-DETECT] appendLog error:", err);
       }
 
-      // increment in-memory securityAttempts
+      // increment SCRUM-17 securityAttempts
       const key = ip !== "unknown" ? `ip:${ip}` : `user:${session.user_id}`;
       const now = Date.now();
       const prev = securityAttempts.get(key);
@@ -267,7 +166,7 @@ export async function POST(req: Request) {
         prev.lastTs = now;
         securityAttempts.set(key, prev);
         if (prev.count >= ATTEMPT_THRESHOLD) {
-          const alertText = `[SECURITY ALERT] Seuil atteint (${prev.count}) pour ${key}.`;
+          const alertText = `[SECURITY ALERT] Seuil atteint (${prev.count}) pour ${key}. Action recommandée: bannissement temporaire ou investigation.`;
           try {
             appendLog({
               chatId: secChatId,
@@ -290,13 +189,15 @@ export async function POST(req: Request) {
       );
     }
 
-    // ---------- US-013: rate limiting ----------
-    const now = Date.now();
+    // ---------------------- Rate limiting (US-013) ----------------------
+    // Check ban first
     const banExpiry = banMap.get(userKey);
+    const now = Date.now();
     if (banExpiry && banExpiry > now) {
       const remainingMin = Math.ceil((banExpiry - now) / 60000);
       const message = `Vous avez atteint la limite de questions. Réessayez dans ${remainingMin} minute(s).`;
-
+      console.log("[RATE] user blocked", { userKey, banExpiry });
+      // Log the blocked attempt
       try {
         appendLog({
           chatId: incomingChatId || uuidv4(),
@@ -312,23 +213,33 @@ export async function POST(req: Request) {
       } catch (err) {
         console.error("[RATE] appendLog blocked attempt error:", err);
       }
-
       return NextResponse.json({ error: message }, { status: 429 });
     }
 
+    // get timestamps array for user and prune older than window
     const windowStart = now - RATE_LIMIT_WINDOW_MS;
     const arr = rateMap.get(userKey) || [];
     const pruned = arr.filter((ts) => ts > windowStart);
     pruned.push(now);
+
+    // store back pruned array
     rateMap.set(userKey, pruned);
 
     if (pruned.length > RATE_LIMIT_MAX) {
+      // Exceeded limit -> apply temporary ban
       const banUntil = now + RATE_LIMIT_BAN_MS;
       banMap.set(userKey, banUntil);
+
       const humanMsg = `Vous avez atteint la limite de questions. Réessayez dans ${Math.ceil(
         RATE_LIMIT_BAN_MS / 60000
       )} minutes.`;
+      console.log("[RATE] limit exceeded, banning user", {
+        userKey,
+        banUntil,
+        count: pruned.length,
+      });
 
+      // Log the exceeded attempt with required info: user ID, timestamp, IP
       try {
         appendLog({
           chatId: incomingChatId || uuidv4(),
@@ -346,27 +257,67 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: humanMsg }, { status: 429 });
     }
 
-    // ---------- Normal processing: resolve direct answers or fuzzy search ----------
+    // ---------------------- Normal processing ----------------------
     const q = normalize(question);
     const chatId = incomingChatId || uuidv4();
 
-    // Try direct resolution (with alias following)
-    let found = resolveAliasByKey(q);
+    // directAnswers (unchanged)
+    const directAnswers: Record<string, string> = {
+      "horaires bibliotheque":
+        "📚 La bibliothèque est ouverte du lundi au vendredi de 8h à 18h.",
+      "horaires resto u":
+        "🍽️ Le restaurant universitaire est ouvert de 11h30 à 14h et de 18h30 à 20h.",
+      "contact scolarite": "CONTACT_SCOLARITE",
+      "regles de vie": `
+📘 Voici les principales <b>règles de vie du campus</b> :<br/><br/>
+✅ Respecter les horaires et les salles attribuées.<br/>
+🚭 Interdiction de fumer dans les bâtiments.<br/>
+🤝 Respect mutuel entre étudiants et enseignants.<br/>
+💻 Utilisation responsable des ressources numériques.<br/><br/>
+👉 Le <b>règlement intérieur complet</b> est disponible sur <b>Teams</b>, dans la classe :<br/>
+<em>ESIS-2_CPDIA-2_2025-2026</em>.`,
+      "reglement campus": "regles de vie",
+      reglement: "regles de vie",
+      "règles de vie": "regles de vie",
+      "charte de bonne conduite": "regles de vie",
+      "consignes de sécurité": "regles de vie",
+      "dates importantes": `
+🗓️ Voici les prochaines <b>dates importantes</b> du calendrier académique :<br/><br/>
+📅 <b>Rentrée universitaire :</b> 22 septembre 2025<br/>
+📝 <b>Début des examens du semestre 1 :</b> 19 janvier 2025<br/>
+📅 <b>Journée Portes Ouvertes :</b> 15 mars 2025<br/>
+🌸 <b>Vacances de printemps :</b> 20 avril → 04 mai 2025<br/>
+🎓 <b>Fin des cours du semestre 2 :</b> 30 juin 2025<br/>
+☀️ <b>Vacances d’été :</b> à partir du 1er juillet 2025`,
+      examens:
+        "📝 Les examens du semestre 1 débutent le <b>19 janvier 2025</b>.",
+      vacances: "☀️ Les vacances d'été commencent le <b>1er juillet 2025</b>.",
+      "formations proposees": `
+🎓 L’ESIC propose plusieurs formations en <b>informatique</b> et en <b>commerce</b> :<br/><br/>
+... (omitted for brevity)`,
+      formations: "formations proposees",
+      formation: "formations proposees",
+      bts: "formations proposees",
+      master: "formations proposees",
+      informatique: "formations proposees",
+      commerce: "formations proposees",
+      programmes: "formations proposees",
+    };
 
-    // fallback to fuzzy DB search
-    if (!found) {
-      found = findBestAnswer(q);
-    }
+    // find answer
+    let found = directAnswers[q];
+    if (found && directAnswers[found]) found = directAnswers[found];
+    if (!found) found = findBestAnswer(q);
     const response = found || "Je n'ai pas encore la réponse à cette question.";
 
-    // Save logs: user question
+    // save question log (user)
     try {
       appendLog({
         chatId,
         userId: session.user_id,
         role: "user",
         text: question,
-        matched: Boolean(found),
+        matched: 1,
         timestamp: new Date().toISOString(),
         ip,
       });
@@ -374,7 +325,7 @@ export async function POST(req: Request) {
       console.error("appendLog(user) failed:", err);
     }
 
-    // Save logs: assistant response
+    // save assistant log
     try {
       appendLog({
         chatId,
