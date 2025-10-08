@@ -508,7 +508,11 @@ export default function Home() {
                       : "bg-gray-200 text-gray-900")
                   }
                 >
-                  {m.text}
+                  <div
+                    dangerouslySetInnerHTML={{
+                      __html: m.text.replace(/\n/g, "<br/>"),
+                    }}
+                  />
                 </div>
               )}
             </div>

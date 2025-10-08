@@ -10,7 +10,7 @@ import {
 
 export async function POST(req: Request) {
   try {
-    // Auth guard
+    // 🔐 Auth guard
     const cookies = req.headers.get("cookie") || "";
     const sessionId = cookies.split("sid=")[1]?.split(";")[0];
 
@@ -31,28 +31,55 @@ export async function POST(req: Request) {
     const q = normalize(question);
     const chatId = incomingChatId || uuidv4();
 
-    // Direct mapping for exact matches (bypass database lookup)
+    // 🧩 Réponses directes
     const directAnswers: Record<string, string> = {
       "horaires bibliotheque":
-        "La bibliothèque est ouverte du lundi au vendredi de 8h à 18h.",
+        "📚 La bibliothèque est ouverte du lundi au vendredi de 8h à 18h.",
+
       "horaires resto u":
-        "Le restaurant universitaire est ouvert de 11h30 à 14h et de 18h30 à 20h.",
+        "🍽️ Le restaurant universitaire est ouvert de 11h30 à 14h et de 18h30 à 20h.",
+
       "contact scolarite": "CONTACT_SCOLARITE",
+
       "reglement campus":
-        "Le règlement intérieur est disponible sur l'intranet du campus (rubrique Vie étudiante).",
+        "📘 Le règlement intérieur est disponible sur l'intranet du campus (rubrique Vie étudiante).",
+
       reglement:
-        "Le règlement intérieur est disponible sur l'intranet du campus (rubrique Vie étudiante).",
-      "dates importantes":
-        "Examens à partir du 15 juin. Inscriptions jusqu'au 30 septembre.",
-      "formations proposees": "Informatique, Gestion, Droit et Design.",
-      formations: "Informatique, Gestion, Droit et Design.",
+        "📘 Le règlement intérieur est disponible sur l'intranet du campus (rubrique Vie étudiante).",
+
+      // ✅ US-009 : Dates importantes du calendrier académique
+      "dates importantes": `
+🗓️ Voici les prochaines <b>dates importantes</b> du calendrier académique :<br/><br/>
+📅 <b>Rentrée universitaire :</b> 22 septembre 2025<br/>
+📝 <b>Début des examens du semestre 1 :</b> 19 janvier 2025<br/>
+📅 <b>Journée Portes Ouvertes :</b> 15 mars 2025<br/>
+🌸 <b>Vacances de printemps :</b> 20 avril → 04 mai 2025<br/>
+🎓 <b>Fin des cours du semestre 2 :</b> 30 juin 2025<br/>
+☀️ <b>Vacances d’été :</b> à partir du 1er juillet 2025
+`,
+
+      examens: `
+📝 Les examens du semestre 1 débutent le **19 janvier 2025**.
+`,
+
+      vacances: `
+☀️ Les vacances d'été commencent le **1er juillet 2025**.
+`,
+
+      "formations proposees": `
+🎓 Formations proposées : Informatique, Gestion, Droit et Design.
+`,
+
+      formations: `
+🎓 Formations proposées : Informatique, Gestion, Droit et Design.
+`,
     };
 
-    // Trouver une réponse
+    // 🔍 Recherche de réponse
     let found = directAnswers[q] || findBestAnswer(q);
     const response = found || "Je n'ai pas encore la réponse à cette question.";
 
-    // Sauvegarder la question (user)
+    // 🧾 Sauvegarde question (utilisateur)
     appendLog({
       chatId,
       userId: session.user_id,
@@ -66,7 +93,7 @@ export async function POST(req: Request) {
         "unknown",
     });
 
-    // Sauvegarder la réponse (assistant)
+    // 🧾 Sauvegarde réponse (assistant)
     appendLog({
       chatId,
       userId: session.user_id,

@@ -102,7 +102,7 @@ export default function SignupPage() {
               <input
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-gray-300 bg-gray-50 focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)] outline-none"
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-gray-900 placeholder-gray-500"
                 placeholder="Prénom"
                 required
               />
@@ -112,7 +112,7 @@ export default function SignupPage() {
               <input
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-gray-300 bg-gray-50 focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)] outline-none"
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-gray-900 placeholder-gray-500"
                 placeholder="Nom"
                 required
               />
@@ -127,7 +127,7 @@ export default function SignupPage() {
             <input
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl border border-gray-300 bg-gray-50 focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)] outline-none"
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-gray-900 placeholder-gray-500"
               placeholder="Votre identifiant"
               required
             />
@@ -142,7 +142,7 @@ export default function SignupPage() {
               type={showPassword ? "text" : "password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl border border-gray-300 bg-gray-50 focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)] outline-none pr-12"
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-gray-900 placeholder-gray-500"
               placeholder="••••••••"
               minLength={6}
               required
@@ -165,7 +165,7 @@ export default function SignupPage() {
               type={showConfirmPassword ? "text" : "password"}
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl border border-gray-300 bg-gray-50 focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)] outline-none pr-12"
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-gray-900 placeholder-gray-500"
               placeholder="••••••••"
               required
             />
