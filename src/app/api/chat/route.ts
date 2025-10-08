@@ -51,7 +51,7 @@ export async function POST(req: Request) {
 🚭 Interdiction de fumer dans les bâtiments.<br/>
 🤝 Respect mutuel entre étudiants et enseignants.<br/>
 💻 Utilisation responsable des ressources numériques.<br/><br/>
-👉 Le <b>règlement intérieur complet</b> est disponible en PDF sur <b>Teams</b>, dans la classe :<br/>
+👉 Le <b>règlement intérieur complet</b> est disponible sur <b>Teams</b>, dans la classe :<br/>
 <em>ESIS-2_CPDIA-2_2025-2026</em>.`,
 
       "reglement campus": "regles de vie",
@@ -74,11 +74,48 @@ export async function POST(req: Request) {
         "📝 Les examens du semestre 1 débutent le <b>19 janvier 2025</b>.",
       vacances: "☀️ Les vacances d'été commencent le <b>1er juillet 2025</b>.",
 
-      // 🎓 Formations proposées
-      "formations proposees":
-        "🎓 Formations proposées : Informatique, Gestion, Droit et Design.",
-      formations:
-        "🎓 Formations proposées : Informatique, Gestion, Droit et Design.",
+      // ✅ US-010 : Formations proposées
+      "formations proposees": `
+🎓 L’ESIC propose plusieurs formations en <b>informatique</b> et en <b>commerce</b> :<br/><br/>
+
+<b>BTS :</b><br/>
+• BTS Management Commercial Opérationnel (MCO)<br/>
+• BTS Gestion de la PME (GPME)<br/>
+• BTS Cybersécurité Informatique et Réseaux, Électronique<br/>
+• BTS SIO, option SISR (Infrastructures & Réseaux)<br/>
+• BTS Négociation et Digitalisation de la Relation Client (NDRC)<br/>
+• BTS Support à l’Action Managériale (SAM)<br/>
+• BTS Cybersécurité (option CIEL)<br/><br/>
+
+<b>Commerce :</b><br/>
+• Chef de Projet Digital<br/>
+• Prépa Community Manager<br/>
+• TP - Responsable d'établissement marchand<br/>
+• Responsable Commerce et Marketing<br/>
+• Responsable d'activité commerciale et marketing<br/>
+• Ingénieur d'Affaires<br/><br/>
+
+<b>Informatique :</b><br/>
+• Technicien Supérieur Systèmes et Réseaux<br/>
+• Concepteur de solutions no code<br/>
+• Administrateur d'infrastructures sécurisées<br/>
+• Concepteur développeur d'applications<br/>
+• Master Expert en Systèmes d’Information et Sécurité<br/>
+• Chef de projet Data et Intelligence Artificielle<br/><br/>
+
+<b>Autres :</b><br/>
+• CAP AEPE<br/>
+• TP SAMS
+`,
+
+      // synonymes
+      formations: "formations proposees",
+      formation: "formations proposees",
+      bts: "formations proposees",
+      master: "formations proposees",
+      informatique: "formations proposees",
+      commerce: "formations proposees",
+      programmes: "formations proposees",
     };
 
     // 🔍 Recherche de réponse + gestion des redirections internes
